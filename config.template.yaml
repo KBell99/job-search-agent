@@ -1,0 +1,85 @@
+# Job Search Agent — Configuration Template
+# Copy this file to config.yaml and fill in your values.
+
+# ── Role ──────────────────────────────────────────────────────────────────────
+role:
+  title: "Software Engineer"          # primary search term sent to each job board
+  level:                              # junior | mid | senior | staff | principal
+    - "mid"
+    - "senior"
+  keywords:                           # additional terms used to filter/score results
+    - "Python"
+    - "backend"
+
+# ── Resume ────────────────────────────────────────────────────────────────────
+resume:
+  path: "resume/YourResume.pdf"       # .pdf or .txt, relative to project root
+
+# ── Job Boards ────────────────────────────────────────────────────────────────
+# linkedin   — public guest API, 1-hour time filter built in
+# indeed     — RSS feed, filtered locally to posted_within_hours
+# wellfound  — falls back to headless browser on 403
+# builtin    — falls back to headless browser on empty response
+# remotive   — remote-only, free API (no auth required)
+# weworkremotely — remote-only, RSS feed
+# arbeitnow  — EU + global, free API
+job_boards:
+  - name: "linkedin"
+    enabled: true
+  - name: "indeed"
+    enabled: true
+  - name: "wellfound"
+    enabled: true
+  - name: "builtin"
+    enabled: true
+  - name: "remotive"
+    enabled: false
+  - name: "weworkremotely"
+    enabled: false
+  - name: "arbeitnow"
+    enabled: false
+
+# ── Locations ─────────────────────────────────────────────────────────────────
+# List one or more cities. Each is searched independently and results are merged.
+location:
+- city: "Chicago"
+  state: "IL"
+  country: "US"
+  radius_miles: 25
+
+# ── Work Type ─────────────────────────────────────────────────────────────────
+work_type: "hybrid"                   # remote | hybrid | onsite
+
+# ── Application Settings ──────────────────────────────────────────────────────
+application:
+  max_jobs: 10                        # max jobs to analyze per run
+  posted_within_hours: 24            # only consider jobs posted within this window
+  min_match_score: 65                 # 0–100; jobs below this threshold are skipped
+  cover_letter: true                  # generate a tailored cover letter per job
+
+# ── LLM (Ollama + Qwen) ───────────────────────────────────────────────────────
+# Requires Ollama running locally: https://ollama.com
+# Pull the model first: ollama pull qwen2.5:7b
+llm:
+  provider: "ollama"
+  model: "qwen2.5:7b"                 # qwen2.5:7b | qwen2.5:14b | qwen2.5:32b
+  base_url: "http://localhost:11434"
+  temperature: 0.3                    # lower = more consistent output
+  context_window: 8192
+
+# ── Contact Info ──────────────────────────────────────────────────────────────
+# Used to populate cover letters.
+contact:
+  name: ""
+  email: ""
+  phone: ""
+  linkedin_url: ""
+  github_url: ""
+  portfolio_url: ""
+
+# ── Output ────────────────────────────────────────────────────────────────────
+output:
+  log_level: "INFO"                   # DEBUG | INFO | WARNING | ERROR
+  db_path: "applications/tracker.db"
+  results_dir: "applications"
+  csv_path: "applications/jobs.csv"   # set to "" to disable CSV output
