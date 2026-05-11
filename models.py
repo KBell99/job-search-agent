@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -45,7 +45,8 @@ class Job:
     def age_hours(self) -> Optional[float]:
         if self.posted_at is None:
             return None
-        return (datetime.utcnow() - self.posted_at).total_seconds() / 3600
+        posted = self.posted_at if self.posted_at.tzinfo else self.posted_at.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - posted).total_seconds() / 3600
 
 
 @dataclass

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 import urllib.parse
 from datetime import datetime, timedelta, timezone
@@ -8,90 +9,89 @@ from typing import Iterator
 
 from bs4 import BeautifulSoup
 
-from config import Config
 from models import Job, Location, WorkType
 from scrapers.base import BaseScraper
 
 logger = logging.getLogger(__name__)
 
-_BASE = "https://builtin.com"
+_BASE_URL = "https://builtin.com/jobs"
 
-_CITY_SLUGS = {
-    "chicago": "chicago",
-    "seattle": "seattle",
-    "san francisco": "san-francisco",
-    "new york": "nyc",
-    "boston": "boston",
-    "austin": "austin",
-    "los angeles": "los-angeles",
-    "denver": "colorado",
-    "atlanta": "atlanta",
-    "miami": "miami",
+_WORK_TYPE_SLUGS = {
+    WorkType.REMOTE: "remote",
+    WorkType.HYBRID: "hybrid",
+    WorkType.ONSITE: "office",
 }
 
-# Builtin search URL that accepts a keyword and optional city filter
-_SEARCH_URL = f"{_BASE}/jobs"
+_STATE_NAMES = {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
+    "CA": "California", "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware",
+    "FL": "Florida", "GA": "Georgia", "HI": "Hawaii", "ID": "Idaho",
+    "IL": "Illinois", "IN": "Indiana", "IA": "Iowa", "KS": "Kansas",
+    "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
+    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi",
+    "MO": "Missouri", "MT": "Montana", "NE": "Nebraska", "NV": "Nevada",
+    "NH": "New Hampshire", "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York",
+    "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma",
+    "OR": "Oregon", "PA": "Pennsylvania", "RI": "Rhode Island", "SC": "South Carolina",
+    "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas", "UT": "Utah",
+    "VT": "Vermont", "VA": "Virginia", "WA": "Washington", "WV": "West Virginia",
+    "WI": "Wisconsin", "WY": "Wyoming", "DC": "District of Columbia",
+}
 
 
 class BuiltinScraper(BaseScraper):
     name = "builtin"
 
     def scrape(self, location: Location) -> Iterator[Job]:
-        city_slug = _CITY_SLUGS.get(location.city.lower(), "")
+        work_slug = _WORK_TYPE_SLUGS.get(self.config.work_type, "hybrid")
+        params: dict[str, str] = {
+            "search": self.config.role.title,
+            "daysSinceUpdated": str(math.ceil(self.config.application.posted_within_hours / 24)),
+            "city": location.city,
+            "state": _STATE_NAMES.get(location.state.upper(), location.state),
+            "country": "USA",
+            "allLocations": "true",
+        }
 
-        if self.config.work_type == WorkType.REMOTE:
-            url = f"{_BASE}/remote/jobs"
-            params = {"search": self.config.role.title}
-        elif city_slug:
-            # Correct city URL — no query params, Builtin's router rejects unknown ones
-            url = f"{_BASE}/{city_slug}/jobs"
-            params = {"search": self.config.role.title}
-        else:
-            url = _SEARCH_URL
-            params = {"search": self.config.role.title}
-
-        full_url = f"{url}?{urllib.parse.urlencode(params)}"
+        full_url = f"{_BASE_URL}/{work_slug}?{urllib.parse.urlencode(params)}"
         logger.debug("[builtin] fetching: %s", full_url)
 
-        html = self._fetch(url, params)
+        html = self._fetch(full_url)
         if not html:
             return
 
         soup = BeautifulSoup(html, "html.parser")
-        cards = (
-            soup.find_all("article")
-            or soup.find_all("div", class_=re.compile(r"job-card|JobCard", re.I))
-            or soup.find_all("li", class_=re.compile(r"job", re.I))
-        )
+        anchors = soup.find_all(["a", "div"], attrs={"data-id": "job-card-title"})
+        logger.debug("[builtin] found %d job-card-title anchors", len(anchors))
 
         role_terms = [self.config.role.title.lower()] + [
             k.lower() for k in self.config.role.keywords
         ]
 
-        for card in cards:
-            job = self._parse_card(card, location)
+        for anchor in anchors:
+            job = self._parse_card(anchor, location)
             if job and self._relevant(job.title, role_terms):
                 yield job
 
-    # ── fetch: HTTP first, Playwright on 404 / empty body ───────────────────
+    # ── fetch: HTTP first, Playwright on 404 / 403 / empty shell ────────────
 
-    def _fetch(self, url: str, params: dict) -> str | None:
+    def _fetch(self, full_url: str) -> str | None:
         try:
-            resp = self._get(url, params=params)
-            # Builtin is React-rendered; a bare HTML shell has very little content
+            resp = self.session.get(full_url, timeout=15)
+            resp.raise_for_status()
             if len(resp.text) < 5_000:
                 logger.info("[builtin] response too short (%d chars) — retrying with browser", len(resp.text))
-                return self._fetch_browser(url, params)
+                return self._fetch_browser(full_url)
             return resp.text
         except Exception as e:
             status = getattr(getattr(e, "response", None), "status_code", None)
             if status in (404, 403):
                 logger.info("[builtin] %s on HTTP — retrying with browser", status)
-                return self._fetch_browser(url, params)
+                return self._fetch_browser(full_url)
             logger.warning("[builtin] request failed: %s", e)
             return None
 
-    def _fetch_browser(self, url: str, params: dict) -> str | None:
+    def _fetch_browser(self, full_url: str) -> str | None:
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
@@ -101,10 +101,10 @@ class BuiltinScraper(BaseScraper):
             )
             return None
 
-        full_url = f"{url}?{urllib.parse.urlencode(params)}"
+        headless = not self.config.output.show_browser
         try:
             with sync_playwright() as pw:
-                browser = pw.chromium.launch(headless=True)
+                browser = pw.chromium.launch(headless=headless)
                 ctx = browser.new_context(
                     user_agent=(
                         "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -131,38 +131,40 @@ class BuiltinScraper(BaseScraper):
 
     # ── parsers ──────────────────────────────────────────────────────────────
 
-    def _parse_card(self, card, location: Location) -> Job | None:
+    def _parse_card(self, anchor, location: Location) -> Job | None:
+        # anchor is <a id="job-card-title">; parent container holds company + timestamp
         try:
-            title_el = card.find(["h2", "h3"], class_=re.compile(r"title|job-name", re.I))
-            if not title_el:
-                title_el = card.find("a")
-
-            company_el = card.find(class_=re.compile(r"company", re.I))
-            link_el = card.find("a", href=True)
-
-            if not title_el or not link_el:
+            href = anchor.get("href", "")
+            if not href:
                 return None
 
-            href = link_el["href"]
-            full_url = href if href.startswith("http") else f"{_BASE}{href}"
+            title = anchor.get_text(strip=True)
+            full_url = href if href.startswith("http") else f"https://builtin.com{href}"
             job_id_m = re.search(r"/jobs/(\d+|[a-z0-9-]+)/?$", href)
             job_id = job_id_m.group(1) if job_id_m else None
 
-            time_el = card.find(class_=re.compile(r"date|posted|ago|time", re.I))
+            container = anchor.parent
+            company_el = container.find(class_=re.compile(r"company", re.I)) if container else None
+
+            time_el = container.find(
+                "span",
+                class_="fs-xs fw-bold bg-gray-01 font-Montserrat text-gray-03 rounded-1 py-xs px-sm",
+            ) if container else None
             posted_at = self._parse_relative(time_el.get_text(strip=True) if time_el else "")
+            logger.debug("[builtin] %s — posted: %s", title, time_el.get_text(strip=True) if time_el else "unknown")
 
             if not self.within_window(posted_at):
                 return None
 
-            desc_el = card.find(class_=re.compile(r"desc|summary", re.I))
+            desc_el = container.find(class_=re.compile(r"desc|summary", re.I)) if container else None
 
             return Job(
-                title=title_el.get_text(strip=True),
+                title=title,
                 company=(company_el.get_text(strip=True) if company_el else ""),
                 location=str(location),
                 url=full_url,
                 source=self.name,
-                description=(desc_el.get_text(" ", strip=True) if desc_el else card.get_text(" ", strip=True)),
+                description=(desc_el.get_text(" ", strip=True) if desc_el else ""),
                 posted_at=posted_at,
                 work_type=self.config.work_type,
                 job_id=job_id,
@@ -176,21 +178,16 @@ class BuiltinScraper(BaseScraper):
         return any(t in title_lower for t in terms)
 
     def _parse_relative(self, text: str) -> datetime | None:
+        # Expects: "x hours ago" | "x minutes ago" | "x days ago"
         now = datetime.now(tz=timezone.utc)
-        text = text.lower().strip()
-
-        if text in ("today", "just now", "new"):
-            return now - timedelta(minutes=30)
-
-        m = re.search(r"(\d+)\s*(m|min|minute|h|hr|hour|d|day|w|week)", text)
+        m = re.search(r"(\d+)\s*(minute|hour|day)s?\s+ago", text.lower().strip())
         if not m:
             return None
         n, unit = int(m.group(1)), m.group(2)
         delta_map = {
-            "m": timedelta(minutes=n), "min": timedelta(minutes=n), "minute": timedelta(minutes=n),
-            "h": timedelta(hours=n),   "hr": timedelta(hours=n),    "hour": timedelta(hours=n),
-            "d": timedelta(days=n),    "day": timedelta(days=n),
-            "w": timedelta(weeks=n),   "week": timedelta(weeks=n),
+            "minute": timedelta(minutes=n),
+            "hour":   timedelta(hours=n),
+            "day":    timedelta(days=n),
         }
         delta = delta_map.get(unit)
         return (now - delta) if delta else None

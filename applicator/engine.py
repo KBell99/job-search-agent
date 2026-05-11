@@ -7,7 +7,7 @@ from pathlib import Path
 from config import Config
 from llm.agents import CoverLetterWriter, JobAnalyzer
 from llm.client import OllamaClient
-from models import Application, ApplicationStatus, Job
+from models import AnalysisResult, Application, ApplicationStatus, Job
 from applicator.tracker import ApplicationTracker
 
 logger = logging.getLogger(__name__)
@@ -60,21 +60,29 @@ class ApplicationEngine:
 
     def run(self, jobs: list[Job]) -> list[Application]:
         cfg = self.config.application
-        results: list[Application] = []
 
-        logger.info("Evaluating %d candidate jobs (target: %d)", len(jobs), cfg.max_jobs)
-
-        for job in jobs[:cfg.max_jobs]:
+        # Pre-filter by salary before expensive LLM scoring
+        jobs = [j for j in jobs if self._salary_ok(j)]
+        logger.info("Scoring %d jobs after salary filter...", len(jobs))
+        scored: list[tuple[AnalysisResult, Job]] = []
+        for job in jobs:
             if self.tracker.already_tracked(job.url):
-                logger.debug("Already applied: %s @ %s — skipping", job.title, job.company)
+                logger.debug("Already tracked: %s @ %s — skipping", job.title, job.company)
                 continue
-
             logger.info("Analyzing: %s @ %s", job.title, job.company)
             analysis = self.analyzer.analyze(job)
-            logger.info("  Score: %d | %s", analysis.match_score, job.company)
+            logger.info("  Score: %d", analysis.match_score)
+            scored.append((analysis, job))
 
+        # Select top N by score
+        scored.sort(key=lambda x: x[0].match_score, reverse=True)
+        top = scored[:cfg.max_jobs]
+        logger.info("Top %d of %d jobs selected (min score: %d)", len(top), len(scored), cfg.min_match_score)
+
+        results: list[Application] = []
+        for analysis, job in top:
             if analysis.match_score < cfg.min_match_score:
-                logger.info("  Score below threshold (%d) — skipping", cfg.min_match_score)
+                logger.info("  Skipping %s @ %s (score %d below threshold)", job.title, job.company, analysis.match_score)
                 app = Application(
                     job=job,
                     analysis=analysis,
@@ -101,11 +109,41 @@ class ApplicationEngine:
             )
             self.tracker.upsert(app)
             results.append(app)
-            logger.info("  Tracked: %s @ %s", job.title, job.company)
+            logger.info("  Tracked: %s @ %s (score %d)", job.title, job.company, analysis.match_score)
 
         stats = self.tracker.get_stats()
+
         logger.info("Session complete — stats: %s", stats)
         return results
+
+    def _salary_ok(self, job: Job) -> bool:
+        sal_cfg = self.config.application.salary
+        if sal_cfg.min is None and sal_cfg.max is None:
+            return True
+
+        if not job.salary:
+            return sal_cfg.include_unlisted
+
+        # Parse the first dollar figure out of the salary string
+        import re
+        figures = [int(n.replace(",", "")) for n in re.findall(r"\$?([\d,]+)", job.salary)]
+        if not figures:
+            return sal_cfg.include_unlisted
+
+        # Normalise hourly to annual (assume 2080 hrs/yr)
+        low = figures[0]
+        if "hour" in job.salary.lower() and low < 1000:
+            low = low * 2080
+
+        if sal_cfg.skip_if_below_min and sal_cfg.min and low < sal_cfg.min:
+            logger.info("  Salary filter: %s @ %s — $%s below min $%s",
+                        job.title, job.company, f"{low:,}", f"{sal_cfg.min:,}")
+            return False
+        if sal_cfg.max and low > sal_cfg.max:
+            logger.info("  Salary filter: %s @ %s — $%s above max $%s",
+                        job.title, job.company, f"{low:,}", f"{sal_cfg.max:,}")
+            return False
+        return True
 
     def close(self) -> None:
         self.tracker.close()

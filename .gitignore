@@ -5,6 +5,9 @@
 applications/
 logs/
 
+# Browser sessions (contain auth cookies — never commit)
+.sessions/
+
 # Resume (keep out of version control)
 resume/
 

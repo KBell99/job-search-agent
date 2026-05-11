@@ -14,9 +14,6 @@ from scrapers.base import BaseScraper
 
 logger = logging.getLogger(__name__)
 
-# f_TPR=r3600 → posted in last 3600 seconds (1 hour)
-_TIME_FILTER = "r3600"
-
 _WORK_TYPE_CODES = {
     WorkType.REMOTE: "2",
     WorkType.HYBRID: "3",
@@ -32,10 +29,11 @@ class LinkedInScraper(BaseScraper):
         loc = urllib.parse.quote_plus(str(location))
         wt_code = _WORK_TYPE_CODES.get(self.config.work_type, "")
         f_wt = f"&f_WT={wt_code}" if wt_code else ""
+        seconds = max(3600, int(self.config.application.posted_within_hours * 3600))
 
         url = (
             f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
-            f"?keywords={title}&location={loc}&f_TPR={_TIME_FILTER}{f_wt}&start=0"
+            f"?keywords={title}&location={loc}&f_TPR=r{seconds}{f_wt}&start=0"
         )
 
         logger.debug("[linkedin] fetching: %s", url)
@@ -46,9 +44,7 @@ class LinkedInScraper(BaseScraper):
             return
 
         soup = BeautifulSoup(resp.text, "html.parser")
-        cards = soup.find_all("li")
-
-        for card in cards:
+        for card in soup.find_all("li"):
             job = self._parse_card(card, location)
             if job:
                 yield job
@@ -56,9 +52,12 @@ class LinkedInScraper(BaseScraper):
     def _parse_card(self, card, location: Location) -> Job | None:
         try:
             title_el = card.find("h3", class_=re.compile("title"))
-            company_el = card.find("h4", class_=re.compile("company"))
+            company_el = (
+                card.find("h4", class_=re.compile("company"))
+                or card.find("h4", class_=re.compile("subtitle"))
+                or card.find("a", href=re.compile(r"/company/"))
+            )
             link_el = card.find("a", href=re.compile(r"/jobs/view/"))
-            time_el = card.find("time")
 
             if not link_el:
                 return None
@@ -66,22 +65,9 @@ class LinkedInScraper(BaseScraper):
             href = link_el.get("href", "")
             job_id = re.search(r"/jobs/view/(\d+)", href)
             job_id = job_id.group(1) if job_id else None
-
             url = f"https://www.linkedin.com/jobs/view/{job_id}" if job_id else href
 
-            posted_at = None
-            if time_el and time_el.get("datetime"):
-                try:
-                    posted_at = datetime.fromisoformat(
-                        time_el["datetime"].replace("Z", "+00:00")
-                    )
-                except ValueError:
-                    pass
-
-            if not self.within_window(posted_at):
-                return None
-
-            desc_text = card.get_text(" ", strip=True)
+            posted_at = self._parse_posted_at(card)
 
             return Job(
                 title=(title_el.get_text(strip=True) if title_el else ""),
@@ -89,7 +75,7 @@ class LinkedInScraper(BaseScraper):
                 location=str(location),
                 url=url,
                 source=self.name,
-                description=desc_text,
+                description=card.get_text(" ", strip=True),
                 posted_at=posted_at,
                 work_type=self.config.work_type,
                 job_id=job_id,
@@ -98,8 +84,29 @@ class LinkedInScraper(BaseScraper):
             logger.debug("[linkedin] card parse error: %s", e)
             return None
 
+    def _parse_posted_at(self, card) -> datetime | None:
+        # Prefer <time datetime="ISO"> attribute
+        time_el = card.find("time")
+        if time_el:
+            dt_attr = time_el.get("datetime", "")
+            if dt_attr:
+                try:
+                    dt = datetime.fromisoformat(dt_attr.replace("Z", "+00:00"))
+                    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+                except ValueError:
+                    pass
+
+        # Fall back to relative text: "2 hours ago", "1 day ago"
+        text = (time_el.get_text(strip=True) if time_el else "") or card.get_text(" ", strip=True)
+        m = re.search(r"(\d+)\s*(minute|hour|day|week)s?\s+ago", text.lower())
+        if not m:
+            return None
+        n, unit = int(m.group(1)), m.group(2)
+        delta = {"minute": timedelta(minutes=n), "hour": timedelta(hours=n),
+                 "day": timedelta(days=n), "week": timedelta(weeks=n)}.get(unit)
+        return (datetime.now(tz=timezone.utc) - delta) if delta else None
+
     def get_full_description(self, job_id: str) -> str:
-        """Fetch the full job description for a given LinkedIn job ID."""
         url = f"https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/{job_id}"
         try:
             resp = self._get(url)

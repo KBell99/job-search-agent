@@ -37,13 +37,18 @@ class BaseScraper(ABC):
         """Scrape all configured locations, deduplicate by job_id."""
         seen: set[str] = set()
         jobs: list[Job] = []
+        limit = self.config.application.max_jobs_per_location
         for loc in self.config.locations:
+            loc_count = 0
             try:
                 for job in self.scrape(loc):
+                    if loc_count >= limit:
+                        break
                     key = job.job_id or f"{job.company}::{job.title}::{job.url}"
                     if key not in seen:
                         seen.add(key)
                         jobs.append(job)
+                        loc_count += 1
             except Exception as e:
                 logger.error("[%s] scrape failed for %s: %s", self.name, loc, e)
         return jobs

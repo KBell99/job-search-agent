@@ -9,6 +9,9 @@ lxml>=5.0.0
 # RSS feeds
 feedparser>=6.0.11
 
+# Indeed scraping (replaces deprecated RSS feed)
+python-jobspy>=1.1.80
+
 # PDF resume parsing
 pdfplumber>=0.10.0
 

@@ -5,6 +5,7 @@ import logging
 import re
 import urllib.parse
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Iterator
 
 from bs4 import BeautifulSoup
@@ -73,33 +74,88 @@ class WellfoundScraper(BaseScraper):
 
         try:
             with sync_playwright() as pw:
-                browser = pw.chromium.launch(headless=True)
-                ctx = browser.new_context(
-                    user_agent=(
-                        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-                    ),
-                    viewport={"width": 1280, "height": 900},
-                )
-                page = ctx.new_page()
-                page.goto(url, timeout=20_000, wait_until="domcontentloaded")
+                session_path = self._session_path()
 
-                # Wait for at least one job card or JSON-LD to appear
-                try:
-                    page.wait_for_selector(
-                        "[data-test*='job'], script[type='application/ld+json']",
-                        timeout=8_000,
-                    )
-                except Exception:
-                    pass  # parse whatever loaded
+                if not session_path.exists():
+                    saved = self._interactive_login(pw, session_path)
+                    if not saved:
+                        return None
 
-                html = page.content()
-                browser.close()
-                logger.debug("[wellfound] browser fetch succeeded (%d chars)", len(html))
+                html = self._navigate(pw, url, session_path)
+
+                # Saved session may have expired — detect login redirect and re-auth
+                if html is None or "wellfound.com/login" in (html or ""):
+                    logger.info("[wellfound] Session expired — re-authenticating")
+                    session_path.unlink(missing_ok=True)
+                    saved = self._interactive_login(pw, session_path)
+                    if not saved:
+                        return None
+                    html = self._navigate(pw, url, session_path)
+
                 return html
         except Exception as e:
             logger.warning("[wellfound] browser fetch failed: %s", e)
             return None
+
+    def _session_path(self):
+        return Path(self.config.output.sessions_dir) / "wellfound.json"
+
+    def _interactive_login(self, pw, session_path: Path) -> bool:
+        """Open a visible browser, wait for the user to log in, then save state."""
+        print(
+            "\n[wellfound] No saved session found.\n"
+            "            A browser window will open — log in to Wellfound,\n"
+            "            then wait. The session saves automatically.\n"
+        )
+        browser = pw.chromium.launch(headless=False)
+        ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+        page = ctx.new_page()
+        page.goto(f"{_BASE}/login", wait_until="domcontentloaded")
+
+        try:
+            # Wait up to 3 minutes for the user to complete login (including any CAPTCHA)
+            page.wait_for_url(re.compile(r"wellfound\.com/(?!login)"), timeout=180_000)
+        except Exception:
+            logger.warning("[wellfound] Login timed out or was cancelled")
+            browser.close()
+            return False
+
+        session_path.parent.mkdir(parents=True, exist_ok=True)
+        ctx.storage_state(path=str(session_path))
+        browser.close()
+        logger.info("[wellfound] Session saved → %s", session_path)
+        return True
+
+    def _navigate(self, pw, url: str, session_path: Path) -> str | None:
+        """Launch a browser with the saved session and return the rendered page HTML."""
+        headless = not self.config.output.show_browser
+        browser = pw.chromium.launch(headless=headless)
+        ctx = browser.new_context(
+            storage_state=str(session_path),
+            user_agent=(
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            ),
+            viewport={"width": 1280, "height": 900},
+        )
+        page = ctx.new_page()
+        try:
+            page.goto(url, timeout=20_000, wait_until="domcontentloaded")
+            try:
+                page.wait_for_selector(
+                    "[data-test*='job'], script[type='application/ld+json']",
+                    timeout=8_000,
+                )
+            except Exception:
+                pass
+            html = page.content()
+            logger.debug("[wellfound] browser fetch succeeded (%d chars)", len(html))
+            return html
+        except Exception as e:
+            logger.warning("[wellfound] navigation failed: %s", e)
+            return None
+        finally:
+            browser.close()
 
     # ── parsers ──────────────────────────────────────────────────────────────
 

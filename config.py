@@ -24,11 +24,26 @@ class JobBoardConfig:
 
 
 @dataclass
+class SalaryConfig:
+    min: Optional[int] = None           # minimum acceptable yearly salary
+    max: Optional[int] = None           # maximum (optional upper bound)
+    currency: str = "USD"
+    skip_if_below_min: bool = True      # drop jobs whose listed salary is below min
+    include_unlisted: bool = True       # include jobs with no salary info
+
+
+@dataclass
 class ApplicationConfig:
     max_jobs: int = 10
+    max_jobs_per_location: int = 25
     posted_within_hours: float = 1.0
     min_match_score: int = 65
     cover_letter: bool = True
+    salary: SalaryConfig = None
+
+    def __post_init__(self):
+        if self.salary is None:
+            self.salary = SalaryConfig()
 
 
 @dataclass
@@ -56,6 +71,8 @@ class OutputConfig:
     db_path: str = "applications/tracker.db"
     results_dir: str = "applications"
     csv_path: str = "applications/jobs.csv"
+    show_browser: bool = False
+    sessions_dir: str = ".sessions"
 
 
 @dataclass
@@ -119,11 +136,21 @@ def load_config(path: str = "config.yaml") -> Config:
     work_type = WorkType(raw.get("work_type", "hybrid"))
 
     app_raw = raw.get("application", {})
+    sal_raw = app_raw.get("salary", {}) or {}
+    salary = SalaryConfig(
+        min=sal_raw.get("min"),
+        max=sal_raw.get("max"),
+        currency=sal_raw.get("currency", "USD"),
+        skip_if_below_min=sal_raw.get("skip_if_below_min", True),
+        include_unlisted=sal_raw.get("include_unlisted", True),
+    )
     application = ApplicationConfig(
         max_jobs=app_raw.get("max_jobs", 10),
+        max_jobs_per_location=app_raw.get("max_jobs_per_location", 25),
         posted_within_hours=app_raw.get("posted_within_hours", 1.0),
         min_match_score=app_raw.get("min_match_score", 65),
         cover_letter=app_raw.get("cover_letter", True),
+        salary=salary,
     )
 
     llm_raw = raw.get("llm", {})
@@ -151,6 +178,8 @@ def load_config(path: str = "config.yaml") -> Config:
         db_path=out_raw.get("db_path", "applications/tracker.db"),
         results_dir=out_raw.get("results_dir", "applications"),
         csv_path=out_raw.get("csv_path", "applications/jobs.csv"),
+        show_browser=out_raw.get("show_browser", False),
+        sessions_dir=out_raw.get("sessions_dir", ".sessions"),
     )
 
     return Config(

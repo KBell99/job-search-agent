@@ -52,10 +52,17 @@ work_type: "hybrid"                   # remote | hybrid | onsite
 
 # ── Application Settings ──────────────────────────────────────────────────────
 application:
-  max_jobs: 10                        # max jobs to analyze per run
+  max_jobs: 10                        # max jobs to analyze per run (across all locations)
+  max_jobs_per_location: 25           # max jobs fetched per location per board
   posted_within_hours: 24            # only consider jobs posted within this window
   min_match_score: 65                 # 0–100; jobs below this threshold are skipped
   cover_letter: true                  # generate a tailored cover letter per job
+  salary:
+    min:                              # minimum acceptable yearly salary (e.g. 100000)
+    max:                              # upper bound — leave blank for no limit
+    currency: "USD"
+    skip_if_below_min: true           # drop jobs whose listed salary is below min
+    include_unlisted: true            # include jobs that don't list a salary
 
 # ── LLM (Ollama + Qwen) ───────────────────────────────────────────────────────
 # Requires Ollama running locally: https://ollama.com
@@ -83,3 +90,5 @@ output:
   db_path: "applications/tracker.db"
   results_dir: "applications"
   csv_path: "applications/jobs.csv"   # set to "" to disable CSV output
+  show_browser: false                 # set true to watch the browser scrape (disables headless)
+  sessions_dir: ".sessions"          # where browser session files are stored (keep out of git)

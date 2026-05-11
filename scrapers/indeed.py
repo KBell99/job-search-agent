@@ -1,12 +1,8 @@
 from __future__ import annotations
 
 import logging
-import re
-import urllib.parse
 from datetime import datetime, timezone
 from typing import Iterator
-
-import feedparser
 
 from config import Config
 from models import Job, Location, WorkType
@@ -14,10 +10,10 @@ from scrapers.base import BaseScraper
 
 logger = logging.getLogger(__name__)
 
-_WORK_TYPE_TERMS = {
+_JOBSPY_WORK_TYPE = {
     WorkType.REMOTE: "remote",
     WorkType.HYBRID: "hybrid",
-    WorkType.ONSITE: "",
+    WorkType.ONSITE: "fulltime",  # jobspy has no onsite enum; omit filter instead
 }
 
 
@@ -25,63 +21,89 @@ class IndeedScraper(BaseScraper):
     name = "indeed"
 
     def scrape(self, location: Location) -> Iterator[Job]:
-        query_parts = [self.config.role.title]
-        wt_term = _WORK_TYPE_TERMS.get(self.config.work_type, "")
-        if wt_term:
-            query_parts.append(wt_term)
-        query_parts.extend(self.config.role.keywords[:2])
+        try:
+            from jobspy import scrape_jobs
+        except ImportError:
+            logger.error("[indeed] python-jobspy not installed — run: pip install python-jobspy")
+            return
 
-        q = urllib.parse.quote_plus(" ".join(query_parts))
-        loc = urllib.parse.quote_plus(str(location))
-        # fromage=1 = last 24h (smallest Indeed supports); we filter to 1h ourselves
-        url = f"https://www.indeed.com/rss?q={q}&l={loc}&sort=date&fromage=1"
+        hours_old = self.config.application.posted_within_hours
+        is_remote = self.config.work_type == WorkType.REMOTE
 
-        logger.debug("[indeed] fetching RSS: %s", url)
-        feed = feedparser.parse(url)
+        logger.debug("[indeed] querying jobspy for '%s' in %s (hours_old=%s)",
+                     self.config.role.title, location, hours_old)
+        try:
+            df = scrape_jobs(
+                site_name=["indeed"],
+                search_term=self.config.role.title,
+                location=str(location),
+                distance=location.radius_miles,
+                is_remote=is_remote,
+                results_wanted=50,
+                hours_old=int(hours_old),
+                country_indeed="USA",
+                verbose=0,
+            )
+        except Exception as e:
+            logger.warning("[indeed] jobspy scrape failed: %s", e)
+            return
 
-        for entry in feed.entries:
-            posted_at = self._parse_date(entry)
+        if df is None or df.empty:
+            logger.info("[indeed] no results for %s", location)
+            return
+
+        logger.info("[indeed] %d results from jobspy for %s", len(df), location)
+
+        for _, row in df.iterrows():
+            posted_at = self._parse_date(row.get("date_posted"))
             if not self.within_window(posted_at):
                 continue
 
-            job_url = entry.get("link", "")
-            job_id = self._extract_jk(job_url)
-
-            description = re.sub(r"<[^>]+>", " ", entry.get("summary", ""))
-
             yield Job(
-                title=entry.get("title", "").split(" - ")[0].strip(),
-                company=self._extract_company(entry),
-                location=entry.get("location", str(location)),
-                url=job_url,
+                title=str(row.get("title") or ""),
+                company=str(row.get("company") or ""),
+                location=str(row.get("location") or location),
+                url=str(row.get("job_url") or ""),
                 source=self.name,
-                description=description,
+                description=str(row.get("description") or ""),
                 posted_at=posted_at,
-                work_type=self._infer_work_type(description),
-                job_id=job_id,
+                work_type=self._map_work_type(row.get("job_type")),
+                job_id=str(row.get("id") or ""),
+                salary=self._format_salary(row),
             )
 
-    def _parse_date(self, entry) -> datetime | None:
-        raw = entry.get("published_parsed") or entry.get("updated_parsed")
-        if raw is None:
+    def _parse_date(self, value) -> datetime | None:
+        if value is None:
             return None
-        return datetime(*raw[:6], tzinfo=timezone.utc)
+        if isinstance(value, datetime):
+            return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+        try:
+            return datetime.fromisoformat(str(value)).replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            return None
 
-    def _extract_jk(self, url: str) -> str | None:
-        m = re.search(r"jk=([a-f0-9]+)", url)
-        return m.group(1) if m else None
-
-    def _extract_company(self, entry) -> str:
-        # Indeed RSS puts "Title - Company - Location" in the title field
-        parts = entry.get("title", "").split(" - ")
-        return parts[1].strip() if len(parts) >= 2 else ""
-
-    def _infer_work_type(self, text: str) -> WorkType | None:
-        lower = text.lower()
+    def _map_work_type(self, value) -> WorkType | None:
+        if not value:
+            return None
+        lower = str(value).lower()
         if "remote" in lower:
             return WorkType.REMOTE
         if "hybrid" in lower:
             return WorkType.HYBRID
-        if "on-site" in lower or "onsite" in lower or "in-office" in lower:
+        if "onsite" in lower or "on-site" in lower or "office" in lower:
             return WorkType.ONSITE
+        return None
+
+    def _format_salary(self, row) -> str | None:
+        import math
+        def _valid(v) -> bool:
+            return v is not None and not (isinstance(v, float) and math.isnan(v))
+
+        low = row.get("min_amount")
+        high = row.get("max_amount")
+        interval = row.get("salary_type") or row.get("interval") or ""
+        if _valid(low) and _valid(high):
+            return f"${int(low):,}–${int(high):,} {interval}".strip()
+        if _valid(low):
+            return f"${int(low):,}+ {interval}".strip()
         return None
