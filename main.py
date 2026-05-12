@@ -44,7 +44,6 @@ def print_jobs_table(jobs) -> None:
     t.add_column("Source", style="cyan", width=14)
     t.add_column("Posted", width=14)
     for i, job in enumerate(jobs, 1):
-        print("Job age: %f", job.age_hours)
         age = f"{job.age_hours:.1f}h ago" if job.age_hours is not None else "unknown"
         t.add_row(str(i), job.title, job.company, job.location, job.source, age)
     console.print(t)

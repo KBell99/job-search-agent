@@ -14,7 +14,7 @@ from scrapers.base import BaseScraper
 
 logger = logging.getLogger(__name__)
 
-_BASE_URL = "https://builtin.com/jobs"
+_BASE_URL = "https://builtin.com/jobs/remote"
 
 _WORK_TYPE_SLUGS = {
     WorkType.REMOTE: "remote",
@@ -144,7 +144,11 @@ class BuiltinScraper(BaseScraper):
             job_id = job_id_m.group(1) if job_id_m else None
 
             container = anchor.parent
-            company_el = container.find(class_=re.compile(r"company", re.I)) if container else None
+            for _ in range(5):
+                if container and container.find(attrs={"data-id": "company-title"}):
+                    break
+                container = container.parent if container else None
+            company_el = container.find(attrs={"data-id": "company-title"}) if container else None
 
             time_el = container.find(
                 "span",

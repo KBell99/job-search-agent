@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 
 from config import Config
 from models import Job
@@ -61,6 +62,12 @@ def run_scrapers(config: Config, max_workers: int = 4) -> list[Job]:
             except Exception as e:
                 logger.error("[%s] scraper raised: %s", board_name, e)
 
-    # Sort newest first
-    all_jobs.sort(key=lambda j: j.posted_at or __import__("datetime").datetime.min, reverse=True)
+    # Sort newest first; strip tzinfo so aware and naive datetimes compare cleanly
+    def _sort_key(j: Job) -> datetime:
+        dt = j.posted_at
+        if dt is None:
+            return datetime.min
+        return dt.replace(tzinfo=None) if dt.tzinfo else dt
+
+    all_jobs.sort(key=_sort_key, reverse=True)
     return all_jobs

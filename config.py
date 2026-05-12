@@ -40,6 +40,7 @@ class ApplicationConfig:
     min_match_score: int = 65
     cover_letter: bool = True
     salary: SalaryConfig = None
+    company_blacklist: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         if self.salary is None:
@@ -151,6 +152,7 @@ def load_config(path: str = "config.yaml") -> Config:
         min_match_score=app_raw.get("min_match_score", 65),
         cover_letter=app_raw.get("cover_letter", True),
         salary=salary,
+        company_blacklist=[c.lower() for c in app_raw.get("company_blacklist", [])],
     )
 
     llm_raw = raw.get("llm", {})

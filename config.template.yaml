@@ -63,6 +63,8 @@ application:
     currency: "USD"
     skip_if_below_min: true           # drop jobs whose listed salary is below min
     include_unlisted: true            # include jobs that don't list a salary
+  company_blacklist:                  # companies to exclude entirely (case-insensitive substring match)
+    - ""                              # e.g. "Acme Corp", "Staffing Agency Name"
 
 # ── LLM (Ollama + Qwen) ───────────────────────────────────────────────────────
 # Requires Ollama running locally: https://ollama.com

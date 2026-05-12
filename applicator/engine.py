@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -61,9 +62,9 @@ class ApplicationEngine:
     def run(self, jobs: list[Job]) -> list[Application]:
         cfg = self.config.application
 
-        # Pre-filter by salary before expensive LLM scoring
-        jobs = [j for j in jobs if self._salary_ok(j)]
-        logger.info("Scoring %d jobs after salary filter...", len(jobs))
+        # Pre-filter before expensive LLM scoring
+        jobs = [j for j in jobs if self._salary_ok(j) and self._company_ok(j)]
+        logger.info("Scoring %d jobs after pre-filters...", len(jobs))
         scored: list[tuple[AnalysisResult, Job]] = []
         for job in jobs:
             if self.tracker.already_tracked(job.url):
@@ -71,6 +72,7 @@ class ApplicationEngine:
                 continue
             logger.info("Analyzing: %s @ %s", job.title, job.company)
             analysis = self.analyzer.analyze(job)
+            analysis.match_score = self._adjust_score(analysis.match_score, job)
             logger.info("  Score: %d", analysis.match_score)
             scored.append((analysis, job))
 
@@ -144,6 +146,53 @@ class ApplicationEngine:
                         job.title, job.company, f"{low:,}", f"{sal_cfg.max:,}")
             return False
         return True
+
+    def _company_ok(self, job: Job) -> bool:
+        blacklist = self.config.application.company_blacklist
+        if not blacklist:
+            return True
+        company_lower = job.company.lower()
+        blocked = any(entry in company_lower for entry in blacklist)
+        if blocked:
+            logger.info("  Blacklisted company: %s — skipping", job.company)
+        return not blocked
+
+    def _adjust_score(self, score: int, job: Job) -> int:
+        adjustment = 0
+
+        # Seniority: senior is the sweet spot; staff/principal overshoot; junior undershoots
+        title = job.title.lower()
+        if re.search(r"\b(staff|principal|distinguished|fellow|director|vp)\b", title):
+            adjustment -= 10
+        elif re.search(r"\b(senior|sr\.?)\b", title):
+            adjustment += 8
+        elif re.search(r"\b(junior|jr\.?|entry.?level|associate)\b", title):
+            adjustment -= 12
+
+        # Experience proximity: target is 4 years; penalise proportionally to distance
+        desc = (job.description or "").lower()
+        exp_m = re.search(
+            r"(\d+)\s*(?:to|-)\s*(\d+)\s*years?"   # "3-5 years" or "3 to 5 years"
+            r"|(\d+)\+\s*years?"                    # "5+ years"
+            r"|(\d+)\s*years?\s+(?:of\s+)?(?:experience|exp)",  # "5 years experience"
+            desc,
+        )
+        if exp_m:
+            g = exp_m.groups()
+            if g[0] and g[1]:
+                required = (int(g[0]) + int(g[1])) / 2
+            elif g[2]:
+                required = int(g[2])
+            else:
+                required = int(g[3])
+            distance = abs(required - 4)
+            adjustment -= min(int(distance * 4), 20)
+            logger.debug("  Exp adjustment: required=%.1f yrs, distance=%.1f, adj=%+d",
+                         required, distance, -min(int(distance * 4), 20))
+
+        raw = score + adjustment
+        logger.debug("  Score adjustment for '%s': %+d → %d", job.title, adjustment, max(0, min(100, raw)))
+        return max(0, min(100, raw))
 
     def close(self) -> None:
         self.tracker.close()
