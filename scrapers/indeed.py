@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timezone
 from typing import Iterator
 
@@ -27,7 +28,7 @@ class IndeedScraper(BaseScraper):
             logger.error("[indeed] python-jobspy not installed — run: pip install python-jobspy")
             return
 
-        hours_old = self.config.application.posted_within_hours
+        hours_old = math.ceil(self.config.application.posted_within_hours / 24) * 24
         is_remote = self.config.work_type == WorkType.REMOTE
 
         logger.debug("[indeed] querying jobspy for '%s' in %s (hours_old=%s)",
@@ -95,7 +96,6 @@ class IndeedScraper(BaseScraper):
         return None
 
     def _format_salary(self, row) -> str | None:
-        import math
         def _valid(v) -> bool:
             return v is not None and not (isinstance(v, float) and math.isnan(v))
 
