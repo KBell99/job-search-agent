@@ -6,7 +6,6 @@ RESUME:
 JOB POSTING:
 Title: {job_title}
 Company: {company}
-Location: {location}
 Description:
 {description}
 

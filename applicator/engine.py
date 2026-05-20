@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 from datetime import datetime
 from pathlib import Path
@@ -169,26 +170,27 @@ class ApplicationEngine:
         elif re.search(r"\b(junior|jr\.?|entry.?level|associate)\b", title):
             adjustment -= 12
 
-        # Experience proximity: target is 4 years; penalise proportionally to distance
+        # Experience proximity: Gaussian weight centred on configured target years.
+        # Scans all mentions and takes the maximum so a "7+ years total experience"
+        # requirement isn't hidden by lower per-skill mentions earlier in the text.
+        # For ranges (e.g. "5-7 years") the max end is used.
         desc = (job.description or "").lower()
-        exp_m = re.search(
-            r"(\d+)\s*(?:to|-)\s*(\d+)\s*years?"   # "3-5 years" or "3 to 5 years"
-            r"|(\d+)\+\s*years?"                    # "5+ years"
-            r"|(\d+)\s*years?\s+(?:of\s+)?(?:experience|exp)",  # "5 years experience"
-            desc,
-        )
-        if exp_m:
-            g = exp_m.groups()
-            if g[0] and g[1]:
-                required = (int(g[0]) + int(g[1])) / 2
-            elif g[2]:
-                required = int(g[2])
-            else:
-                required = int(g[3])
-            distance = abs(required - 4)
-            adjustment -= min(int(distance * 4), 20)
-            logger.debug("  Exp adjustment: required=%.1f yrs, distance=%.1f, adj=%+d",
-                         required, distance, -min(int(distance * 4), 20))
+        years_mentioned: list[float] = []
+        for lo, hi in re.findall(r"(\d+)\s*(?:to|-)\s*(\d+)\s*years?", desc):
+            years_mentioned.append(float(hi))
+        for n in re.findall(r"(\d+)\+\s*years?", desc):
+            years_mentioned.append(float(n))
+        for n in re.findall(r"(\d+)\s*years?\s+(?:of\s+)?(?:experience|exp)", desc):
+            years_mentioned.append(float(n))
+        if years_mentioned:
+            required = max(years_mentioned)
+            target = self.config.role.years_experience
+            sigma = self.config.role.experience_std_dev
+            gaussian = math.exp(-0.5 * ((required - target) / sigma) ** 2)
+            exp_adj = round((gaussian - 1.0) * 20)  # 0 at peak, up to -20 far away
+            adjustment += exp_adj
+            logger.debug("  Exp adjustment: required=%.1f yrs (max of %s), target=%.1f, sigma=%.1f, gaussian=%.3f, adj=%+d",
+                         required, years_mentioned, target, sigma, gaussian, exp_adj)
 
         raw = score + adjustment
         logger.debug("  Score adjustment for '%s': %+d → %d", job.title, adjustment, max(0, min(100, raw)))

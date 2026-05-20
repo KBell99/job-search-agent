@@ -7,6 +7,8 @@ role:
   level:                              # junior | mid | senior | staff | principal
     - "mid"
     - "senior"
+  years_experience: 3                 # target years of experience; score peaks here
+  experience_std_dev: 2               # one std dev in years; each sigma drops weight by ~40%
   keywords:                           # additional terms used to filter/score results
     - "Python"
     - "backend"

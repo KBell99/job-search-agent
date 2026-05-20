@@ -27,7 +27,6 @@ class JobAnalyzer:
             resume=self.resume,
             job_title=job.title,
             company=job.company,
-            location=job.location,
             description=job.description[:4000],  # guard context window
         )
         try:

@@ -15,6 +15,8 @@ class RoleConfig:
     title: str
     level: list[str]
     keywords: list[str] = field(default_factory=list)
+    years_experience: float = 3.0
+    experience_std_dev: float = 2.0
 
 
 @dataclass
@@ -111,6 +113,8 @@ def load_config(path: str = "config.yaml") -> Config:
         title=role_raw["title"],
         level=level,
         keywords=role_raw.get("keywords", []),
+        years_experience=float(role_raw.get("years_experience", 3.0)),
+        experience_std_dev=float(role_raw.get("experience_std_dev", 2.0)),
     )
 
     resume_path = Path(raw["resume"]["path"])

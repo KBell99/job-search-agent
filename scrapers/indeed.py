@@ -57,7 +57,7 @@ class IndeedScraper(BaseScraper):
 
         for _, row in df.iterrows():
             posted_at = self._parse_date(row.get("date_posted"))
-            if not self.within_window(posted_at):
+            if not self._within_ceiling_window(posted_at, hours_old):
                 continue
 
             yield Job(
@@ -72,6 +72,14 @@ class IndeedScraper(BaseScraper):
                 job_id=str(row.get("id") or ""),
                 salary=self._format_salary(row),
             )
+
+    def _within_ceiling_window(self, posted_at: datetime | None, ceiling_hours: int) -> bool:
+        if posted_at is None:
+            return True
+        if posted_at.tzinfo is None:
+            posted_at = posted_at.replace(tzinfo=timezone.utc)
+        now = datetime.now(tz=timezone.utc)
+        return (now - posted_at).total_seconds() / 3600 <= ceiling_hours
 
     def _parse_date(self, value) -> datetime | None:
         if value is None:
