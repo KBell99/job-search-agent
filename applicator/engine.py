@@ -180,7 +180,7 @@ class ApplicationEngine:
             years_mentioned.append(float(hi))
         for n in re.findall(r"(\d+)\+\s*years?", desc):
             years_mentioned.append(float(n))
-        for n in re.findall(r"(\d+)\s*years?\s+(?:of\s+)?(?:experience|exp)", desc):
+        for n in re.findall(r"(\d+)\s*years?\s+(?:of\s+)?(?:[\w-]+\s+){0,2}(?:experience|exp)", desc):
             years_mentioned.append(float(n))
         if years_mentioned:
             required = max(years_mentioned)
