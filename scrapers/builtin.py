@@ -42,10 +42,10 @@ _STATE_NAMES = {
 class BuiltinScraper(BaseScraper):
     name = "builtin"
 
-    def scrape(self, location: Location) -> Iterator[Job]:
-        work_slug = _WORK_TYPE_SLUGS.get(self.config.work_type, "hybrid")
+    def scrape(self, location: Location, work_type: WorkType) -> Iterator[Job]:
+        work_slug = _WORK_TYPE_SLUGS.get(work_type, "hybrid")
         params: dict[str, str] = {
-            "search": self.config.role.title,
+            "search": self.role.title,
             "daysSinceUpdated": str(math.ceil(self.config.application.posted_within_hours / 24)),
             "city": location.city,
             "state": _STATE_NAMES.get(location.state.upper(), location.state),
@@ -64,12 +64,12 @@ class BuiltinScraper(BaseScraper):
         anchors = soup.find_all(["a", "div"], attrs={"data-id": "job-card-title"})
         logger.debug("[builtin] found %d job-card-title anchors", len(anchors))
 
-        role_terms = [self.config.role.title.lower()] + [
-            k.lower() for k in self.config.role.keywords
+        role_terms = [self.role.title.lower()] + [
+            k.lower() for k in self.role.keywords
         ]
 
         for anchor in anchors:
-            job = self._parse_card(anchor, location)
+            job = self._parse_card(anchor, location, work_type)
             if job and self._relevant(job.title, role_terms):
                 yield job
 
@@ -131,7 +131,7 @@ class BuiltinScraper(BaseScraper):
 
     # ── parsers ──────────────────────────────────────────────────────────────
 
-    def _parse_card(self, anchor, location: Location) -> Job | None:
+    def _parse_card(self, anchor, location: Location, work_type: WorkType) -> Job | None:
         # anchor is <a id="job-card-title">; parent container holds company + timestamp
         try:
             href = anchor.get("href", "")
@@ -170,7 +170,7 @@ class BuiltinScraper(BaseScraper):
                 source=self.name,
                 description=(desc_el.get_text(" ", strip=True) if desc_el else ""),
                 posted_at=posted_at,
-                work_type=self.config.work_type,
+                work_type=work_type,
                 job_id=job_id,
             )
         except Exception as e:

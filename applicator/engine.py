@@ -6,7 +6,7 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-from config import Config
+from config import Config, RoleConfig
 from llm.agents import CoverLetterWriter, JobAnalyzer
 from llm.client import OllamaClient
 from models import AnalysisResult, Application, ApplicationStatus, Job
@@ -39,8 +39,9 @@ def save_cover_letter(job: Job, text: str, output_dir: str) -> Path:
 
 
 class ApplicationEngine:
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, role: RoleConfig):
         self.config = config
+        self.role = role
         self.tracker = ApplicationTracker(config.output.db_path)
 
         self.llm = OllamaClient(
@@ -49,8 +50,8 @@ class ApplicationEngine:
             temperature=config.llm.temperature,
         )
 
-        self.resume_text = load_resume(config.resume_path)
-        logger.info("Resume loaded (%d chars)", len(self.resume_text))
+        self.resume_text = load_resume(role.resume_path)
+        logger.info("Resume loaded from %s (%d chars)", role.resume_path, len(self.resume_text))
 
         self.analyzer = JobAnalyzer(self.llm, self.resume_text)
 
@@ -64,7 +65,7 @@ class ApplicationEngine:
         cfg = self.config.application
 
         # Pre-filter before expensive LLM scoring
-        jobs = [j for j in jobs if self._salary_ok(j) and self._company_ok(j)]
+        jobs = [j for j in jobs if self._salary_ok(j) and self._company_ok(j) and self._employment_type_ok(j)]
         logger.info("Scoring %d jobs after pre-filters...", len(jobs))
         scored: list[tuple[AnalysisResult, Job]] = []
         for job in jobs:
@@ -148,6 +149,17 @@ class ApplicationEngine:
             return False
         return True
 
+    def _employment_type_ok(self, job: Job) -> bool:
+        allowed = self.config.application.employment_types
+        if not allowed or job.employment_type is None:
+            return True
+        ok = job.employment_type in allowed
+        if not ok:
+            logger.info("  Employment type filter: %s @ %s — '%s' not in %s",
+                        job.title, job.company, job.employment_type.value,
+                        [e.value for e in allowed])
+        return ok
+
     def _company_ok(self, job: Job) -> bool:
         blacklist = self.config.application.company_blacklist
         if not blacklist:
@@ -184,8 +196,8 @@ class ApplicationEngine:
             years_mentioned.append(float(n))
         if years_mentioned:
             required = max(years_mentioned)
-            target = self.config.role.years_experience
-            sigma = self.config.role.experience_std_dev
+            target = self.role.years_experience
+            sigma = self.role.experience_std_dev
             gaussian = math.exp(-0.5 * ((required - target) / sigma) ** 2)
             exp_adj = round((gaussian - 1.0) * 20)  # 0 at peak, up to -20 far away
             adjustment += exp_adj

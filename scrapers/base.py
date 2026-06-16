@@ -7,7 +7,7 @@ from typing import Iterator
 
 import requests
 
-from config import Config
+from config import Config, RoleConfig
 from models import Job, Location
 
 logger = logging.getLogger(__name__)
@@ -24,33 +24,35 @@ _HEADERS = {
 class BaseScraper(ABC):
     name: str = ""
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, role: RoleConfig):
         self.config = config
+        self.role = role
         self.session = requests.Session()
         self.session.headers.update(_HEADERS)
 
     @abstractmethod
-    def scrape(self, location: Location) -> Iterator[Job]:
-        """Yield Job objects for a given location."""
+    def scrape(self, location: Location, work_type: WorkType) -> Iterator[Job]:
+        """Yield Job objects for a given location and work type."""
 
     def scrape_all(self) -> list[Job]:
-        """Scrape all configured locations, deduplicate by job_id."""
+        """Scrape all configured locations × work types, deduplicate by job_id."""
         seen: set[str] = set()
         jobs: list[Job] = []
         limit = self.config.application.max_jobs_per_location
-        for loc in self.config.locations:
-            loc_count = 0
-            try:
-                for job in self.scrape(loc):
-                    if loc_count >= limit:
-                        break
-                    key = job.job_id or f"{job.company}::{job.title}::{job.url}"
-                    if key not in seen:
-                        seen.add(key)
-                        jobs.append(job)
-                        loc_count += 1
-            except Exception as e:
-                logger.error("[%s] scrape failed for %s: %s", self.name, loc, e)
+        for work_type in self.config.work_types:
+            for loc in self.config.locations:
+                loc_count = 0
+                try:
+                    for job in self.scrape(loc, work_type):
+                        if loc_count >= limit:
+                            break
+                        key = job.job_id or f"{job.company}::{job.title}::{job.url}"
+                        if key not in seen:
+                            seen.add(key)
+                            jobs.append(job)
+                            loc_count += 1
+                except Exception as e:
+                    logger.error("[%s] scrape failed for %s/%s: %s", self.name, loc, work_type.value, e)
         return jobs
 
     def within_window(self, posted_at: datetime | None) -> bool:

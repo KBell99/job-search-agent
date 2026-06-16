@@ -7,13 +7,14 @@ from typing import Optional
 
 import yaml
 
-from models import Location, WorkType
+from models import EmploymentType, Location, WorkType
 
 
 @dataclass
 class RoleConfig:
     title: str
     level: list[str]
+    resume_path: Path = field(default_factory=lambda: Path("resume/resume.pdf"))
     keywords: list[str] = field(default_factory=list)
     years_experience: float = 3.0
     experience_std_dev: float = 2.0
@@ -23,6 +24,7 @@ class RoleConfig:
 class JobBoardConfig:
     name: str
     enabled: bool = True
+    board_tokens: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -41,6 +43,7 @@ class ApplicationConfig:
     posted_within_hours: float = 1.0
     min_match_score: int = 65
     cover_letter: bool = True
+    employment_types: list[EmploymentType] = field(default_factory=lambda: [EmploymentType.FULL_TIME])
     salary: SalaryConfig = None
     company_blacklist: list[str] = field(default_factory=list)
 
@@ -80,47 +83,56 @@ class OutputConfig:
 
 @dataclass
 class Config:
-    role: RoleConfig
-    resume_path: Path
+    roles: list[RoleConfig]
     job_boards: list[JobBoardConfig]
     locations: list[Location]
-    work_type: WorkType
+    work_types: list[WorkType]
     application: ApplicationConfig
     llm: LLMConfig
     contact: ContactConfig
     output: OutputConfig
 
     @property
+    def work_type(self) -> WorkType:
+        return self.work_types[0]
+
+    @property
     def enabled_boards(self) -> list[JobBoardConfig]:
         return [b for b in self.job_boards if b.enabled]
 
-    @property
-    def search_query(self) -> str:
-        parts = [self.role.title] + self.role.keywords[:3]
-        return " ".join(parts)
+
+def _parse_role(role_raw: dict, default_resume: str | None = None) -> RoleConfig:
+    level = role_raw.get("level", [])
+    if isinstance(level, str):
+        level = [level]
+    resume_val = role_raw.get("resume", default_resume) or "resume/resume.pdf"
+    return RoleConfig(
+        title=role_raw["title"],
+        level=level,
+        resume_path=Path(resume_val),
+        keywords=role_raw.get("keywords", []),
+        years_experience=float(role_raw.get("years_experience", 3.0)),
+        experience_std_dev=float(role_raw.get("experience_std_dev", 2.0)),
+    )
 
 
 def load_config(path: str = "config.yaml") -> Config:
     with open(path) as f:
         raw = yaml.safe_load(f)
 
-    role_raw = raw["role"]
-    level = role_raw.get("level", [])
-    if isinstance(level, str):
-        level = [level]
-
-    role = RoleConfig(
-        title=role_raw["title"],
-        level=level,
-        keywords=role_raw.get("keywords", []),
-        years_experience=float(role_raw.get("years_experience", 3.0)),
-        experience_std_dev=float(role_raw.get("experience_std_dev", 2.0)),
-    )
-
-    resume_path = Path(raw["resume"]["path"])
+    # Support both new `roles:` list and legacy `role:` + top-level `resume:`
+    if "roles" in raw:
+        roles = [_parse_role(r) for r in raw["roles"]]
+    else:
+        default_resume = (raw.get("resume") or {}).get("path")
+        roles = [_parse_role(raw["role"], default_resume=default_resume)]
 
     boards = [
-        JobBoardConfig(name=b["name"], enabled=b.get("enabled", True))
+        JobBoardConfig(
+            name=b["name"],
+            enabled=b.get("enabled", True),
+            board_tokens=b.get("board_tokens", []),
+        )
         for b in raw.get("job_boards", [])
     ]
 
@@ -138,7 +150,11 @@ def load_config(path: str = "config.yaml") -> Config:
         for loc in loc_raw
     ]
 
-    work_type = WorkType(raw.get("work_type", "hybrid"))
+    wt_raw = raw.get("work_type", "hybrid")
+    if isinstance(wt_raw, list):
+        work_types = [WorkType(w) for w in wt_raw]
+    else:
+        work_types = [WorkType(wt_raw)]
 
     app_raw = raw.get("application", {})
     sal_raw = app_raw.get("salary", {}) or {}
@@ -149,12 +165,18 @@ def load_config(path: str = "config.yaml") -> Config:
         skip_if_below_min=sal_raw.get("skip_if_below_min", True),
         include_unlisted=sal_raw.get("include_unlisted", True),
     )
+    et_raw = app_raw.get("employment_type", ["full-time"])
+    if isinstance(et_raw, str):
+        et_raw = [et_raw]
+    employment_types = [EmploymentType(e) for e in et_raw]
+
     application = ApplicationConfig(
         max_jobs=app_raw.get("max_jobs", 10),
         max_jobs_per_location=app_raw.get("max_jobs_per_location", 25),
         posted_within_hours=app_raw.get("posted_within_hours", 1.0),
         min_match_score=app_raw.get("min_match_score", 65),
         cover_letter=app_raw.get("cover_letter", True),
+        employment_types=employment_types,
         salary=salary,
         company_blacklist=[c.lower() for c in app_raw.get("company_blacklist", [])],
     )
@@ -189,11 +211,10 @@ def load_config(path: str = "config.yaml") -> Config:
     )
 
     return Config(
-        role=role,
-        resume_path=resume_path,
+        roles=roles,
         job_boards=boards,
         locations=locations,
-        work_type=work_type,
+        work_types=work_types,
         application=application,
         llm=llm,
         contact=contact,

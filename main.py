@@ -20,7 +20,7 @@ from rich.logging import RichHandler
 from rich.table import Table
 
 from config import load_config
-from models import ApplicationStatus
+from models import Application, ApplicationStatus
 from scrapers.factory import run_scrapers
 from applicator.engine import ApplicationEngine
 
@@ -119,14 +119,17 @@ def main() -> None:
         console.print("[bold]Application stats:[/bold]", stats)
         return
 
-    if not config.resume_path.exists():
-        console.print(f"[red]Resume not found:[/red] {config.resume_path}")
-        sys.exit(1)
+    for role in config.roles:
+        if not role.resume_path.exists():
+            console.print(f"[red]Resume not found:[/red] {role.resume_path} (role: {role.title})")
+            sys.exit(1)
 
     console.rule("[bold blue]Job Search Agent")
-    console.print(f"Role:      [bold]{config.role.title}[/bold] ({', '.join(config.role.level)})")
+    for role in config.roles:
+        console.print(f"Role:      [bold]{role.title}[/bold] ({', '.join(role.level)})  resume: {role.resume_path}")
     console.print(f"Locations: {', '.join(str(l) for l in config.locations)}")
-    console.print(f"Work type: {config.work_type.value}")
+    console.print(f"Work type: {', '.join(wt.value for wt in config.work_types)}")
+    console.print(f"Emp. type: {', '.join(et.value for et in config.application.employment_types)}")
     console.print(f"Boards:    {', '.join(b.name for b in config.enabled_boards)}")
     console.print(f"Window:    {config.application.posted_within_hours}h")
     console.rule()
@@ -141,23 +144,36 @@ def main() -> None:
         console.print(f"[yellow]Model {config.llm.model} may not be pulled.[/yellow]")
         console.print(f"Run: [bold]ollama pull {config.llm.model}[/bold]")
 
-    console.print(f"\n[bold]Scraping job boards...[/bold]")
-    jobs = run_scrapers(config)
+    # Scrape and score per role; deduplicate by URL keeping the highest-scoring result.
+    best: dict[str, Application] = {}
+    for role in config.roles:
+        console.print(f"\n[bold]Scraping for: {role.title}...[/bold]")
+        jobs = run_scrapers(config, role)
 
-    if not jobs:
-        console.print("[yellow]No jobs found within the time window.[/yellow]")
+        if not jobs:
+            console.print(f"[yellow]No jobs found for '{role.title}' within the time window.[/yellow]")
+            continue
+
+        print_jobs_table(jobs)
+
+        console.print(f"\n[bold]Scoring '{role.title}' jobs — selecting top {config.application.max_jobs} by match score...[/bold]\n")
+        engine = ApplicationEngine(config, role)
+        try:
+            applications = engine.run(jobs)
+        finally:
+            engine.close()
+
+        for app in applications:
+            url = app.job.url
+            if url not in best or app.analysis.match_score > best[url].analysis.match_score:
+                best[url] = app
+
+    if not best:
+        console.print("[yellow]No jobs found across all roles within the time window.[/yellow]")
         console.print("Try increasing [bold]posted_within_hours[/bold] in config.yaml.")
         return
 
-    print_jobs_table(jobs)
-
-    console.print(f"\n[bold]Scoring all jobs — selecting top {config.application.max_jobs} by match score...[/bold]\n")
-    engine = ApplicationEngine(config)
-    try:
-        applications = engine.run(jobs)
-    finally:
-        engine.close()
-
+    applications = sorted(best.values(), key=lambda a: a.analysis.match_score, reverse=True)
     print_results_table(applications)
 
     if config.output.csv_path:

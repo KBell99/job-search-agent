@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Iterator
 
 from config import Config
-from models import Job, Location, WorkType
+from models import EmploymentType, Job, Location, WorkType
 from scrapers.base import BaseScraper
 
 logger = logging.getLogger(__name__)
@@ -17,11 +17,31 @@ _JOBSPY_WORK_TYPE = {
     WorkType.ONSITE: "fulltime",  # jobspy has no onsite enum; omit filter instead
 }
 
+_JOBSPY_EMPLOYMENT_TYPE = {
+    EmploymentType.FULL_TIME: "fulltime",
+    EmploymentType.PART_TIME: "parttime",
+    EmploymentType.CONTRACT: "contract",
+    EmploymentType.TEMPORARY: "temporary",
+}
+
+_EMPLOYMENT_TYPE_MAP = {
+    "fulltime": EmploymentType.FULL_TIME,
+    "full-time": EmploymentType.FULL_TIME,
+    "full_time": EmploymentType.FULL_TIME,
+    "parttime": EmploymentType.PART_TIME,
+    "part-time": EmploymentType.PART_TIME,
+    "part_time": EmploymentType.PART_TIME,
+    "contract": EmploymentType.CONTRACT,
+    "contractor": EmploymentType.CONTRACT,
+    "temporary": EmploymentType.TEMPORARY,
+    "temp": EmploymentType.TEMPORARY,
+}
+
 
 class IndeedScraper(BaseScraper):
     name = "indeed"
 
-    def scrape(self, location: Location) -> Iterator[Job]:
+    def scrape(self, location: Location, work_type: WorkType) -> Iterator[Job]:
         try:
             from jobspy import scrape_jobs
         except ImportError:
@@ -29,14 +49,14 @@ class IndeedScraper(BaseScraper):
             return
 
         hours_old = math.ceil(self.config.application.posted_within_hours / 24) * 24
-        is_remote = self.config.work_type == WorkType.REMOTE
+        is_remote = work_type == WorkType.REMOTE
 
         logger.debug("[indeed] querying jobspy for '%s' in %s (hours_old=%s)",
-                     self.config.role.title, location, hours_old)
+                     self.role.title, location, hours_old)
         try:
             df = scrape_jobs(
                 site_name=["indeed"],
-                search_term=self.config.role.title,
+                search_term=self.role.title,
                 location=str(location),
                 distance=location.radius_miles,
                 is_remote=is_remote,
@@ -69,6 +89,7 @@ class IndeedScraper(BaseScraper):
                 description=str(row.get("description") or ""),
                 posted_at=posted_at,
                 work_type=self._map_work_type(row.get("job_type")),
+                employment_type=self._map_employment_type(row.get("job_type")),
                 job_id=str(row.get("id") or ""),
                 salary=self._format_salary(row),
             )
@@ -90,6 +111,11 @@ class IndeedScraper(BaseScraper):
             return datetime.fromisoformat(str(value)).replace(tzinfo=timezone.utc)
         except (ValueError, TypeError):
             return None
+
+    def _map_employment_type(self, value) -> EmploymentType | None:
+        if not value:
+            return None
+        return _EMPLOYMENT_TYPE_MAP.get(str(value).lower().strip())
 
     def _map_work_type(self, value) -> WorkType | None:
         if not value:

@@ -4,7 +4,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
-from config import Config
+from config import Config, RoleConfig
 from models import Job
 from scrapers.base import BaseScraper
 from scrapers.arbeitnow import ArbeitnowScraper
@@ -14,6 +14,9 @@ from scrapers.linkedin import LinkedInScraper
 from scrapers.remotive import RemotiveScraper
 from scrapers.wellfound import WellfoundScraper
 from scrapers.weworkremotely import WeWorkRemotelyScraper
+from scrapers.workatastartup import WorkAtAStartupScraper
+from scrapers.roberthalf import RobertHalfScraper
+from scrapers.greenhouse import GreenhouseScraper
 
 logger = logging.getLogger(__name__)
 
@@ -25,23 +28,26 @@ _REGISTRY: dict[str, type[BaseScraper]] = {
     "remotive": RemotiveScraper,
     "weworkremotely": WeWorkRemotelyScraper,
     "arbeitnow": ArbeitnowScraper,
+    "workatastartup": WorkAtAStartupScraper,
+    "roberthalf": RobertHalfScraper,
+    "greenhouse": GreenhouseScraper,
 }
 
 
-def build_scrapers(config: Config) -> list[BaseScraper]:
+def build_scrapers(config: Config, role: RoleConfig) -> list[BaseScraper]:
     scrapers = []
     for board in config.enabled_boards:
         cls = _REGISTRY.get(board.name)
         if cls is None:
             logger.warning("Unknown job board: %s — skipping", board.name)
             continue
-        scrapers.append(cls(config))
+        scrapers.append(cls(config, role))
     return scrapers
 
 
-def run_scrapers(config: Config, max_workers: int = 4) -> list[Job]:
-    """Run all enabled scrapers in parallel and return deduplicated jobs."""
-    scrapers = build_scrapers(config)
+def run_scrapers(config: Config, role: RoleConfig, max_workers: int = 4) -> list[Job]:
+    """Run all enabled scrapers for a given role and return deduplicated jobs."""
+    scrapers = build_scrapers(config, role)
     if not scrapers:
         logger.error("No enabled scrapers found.")
         return []

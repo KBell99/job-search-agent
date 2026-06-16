@@ -12,6 +12,13 @@ class WorkType(str, Enum):
     ONSITE = "onsite"
 
 
+class EmploymentType(str, Enum):
+    FULL_TIME = "full-time"
+    PART_TIME = "part-time"
+    CONTRACT = "contract"
+    TEMPORARY = "temporary"
+
+
 class ApplicationStatus(str, Enum):
     PENDING = "pending"
     SKIPPED = "skipped"
@@ -38,6 +45,7 @@ class Job:
     description: str = ""
     posted_at: Optional[datetime] = None
     work_type: Optional[WorkType] = None
+    employment_type: Optional[EmploymentType] = None
     salary: Optional[str] = None
     job_id: Optional[str] = None        # board-specific ID for deduplication
 

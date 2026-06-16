@@ -16,11 +16,11 @@ _API = "https://remotive.com/api/remote-jobs"
 class RemotiveScraper(BaseScraper):
     name = "remotive"
 
-    def scrape(self, location: Location) -> Iterator[Job]:
+    def scrape(self, location: Location, work_type: WorkType) -> Iterator[Job]:
         # Remotive is remote-only; ignore location filter
         params = {
             "category": "software-dev",
-            "search": self.config.role.title,
+            "search": self.role.title,
             "limit": 50,
         }
         try:

@@ -20,12 +20,12 @@ _RSS_BASE = "https://weworkremotely.com/categories/remote-programming-jobs.rss"
 class WeWorkRemotelyScraper(BaseScraper):
     name = "weworkremotely"
 
-    def scrape(self, location: Location) -> Iterator[Job]:
+    def scrape(self, location: Location, work_type: WorkType) -> Iterator[Job]:
         logger.debug("[weworkremotely] fetching RSS")
         feed = feedparser.parse(_RSS_BASE)
 
-        title_lower = self.config.role.title.lower()
-        keywords = [k.lower() for k in self.config.role.keywords]
+        title_lower = self.role.title.lower()
+        keywords = [k.lower() for k in self.role.keywords]
 
         for entry in feed.entries:
             entry_title = entry.get("title", "").lower()

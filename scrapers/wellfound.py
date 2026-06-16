@@ -22,13 +22,13 @@ _BASE = "https://wellfound.com"
 class WellfoundScraper(BaseScraper):
     name = "wellfound"
 
-    def scrape(self, location: Location) -> Iterator[Job]:
-        role = urllib.parse.quote_plus(self.config.role.title.lower().replace(" ", "-"))
+    def scrape(self, location: Location, work_type: WorkType) -> Iterator[Job]:
+        role = urllib.parse.quote_plus(self.role.title.lower().replace(" ", "-"))
         loc = urllib.parse.quote_plus(location.city.lower().replace(" ", "-"))
 
         url = (
             f"{_BASE}/jobs/{role}/remote"
-            if self.config.work_type == WorkType.REMOTE
+            if work_type == WorkType.REMOTE
             else f"{_BASE}/jobs/{role}/{loc}"
         )
 
@@ -42,11 +42,11 @@ class WellfoundScraper(BaseScraper):
 
         if cards:
             for card in cards:
-                job = self._parse_card(card, location)
+                job = self._parse_card(card, location, work_type)
                 if job:
                     yield job
         else:
-            yield from self._parse_json_ld(soup, location)
+            yield from self._parse_json_ld(soup, location, work_type)
 
     # ── fetch: HTTP first, Playwright on 403 ────────────────────────────────
 
@@ -159,7 +159,7 @@ class WellfoundScraper(BaseScraper):
 
     # ── parsers ──────────────────────────────────────────────────────────────
 
-    def _parse_card(self, card, location: Location) -> Job | None:
+    def _parse_card(self, card, location: Location, work_type: WorkType) -> Job | None:
         try:
             title_el = card.find(["h2", "h3", "a"])
             company_el = card.find(class_=re.compile("company", re.I))
@@ -187,14 +187,14 @@ class WellfoundScraper(BaseScraper):
                 source=self.name,
                 description=card.get_text(" ", strip=True),
                 posted_at=posted_at,
-                work_type=self.config.work_type,
+                work_type=work_type,
                 job_id=job_id,
             )
         except Exception as e:
             logger.debug("[wellfound] card parse error: %s", e)
             return None
 
-    def _parse_json_ld(self, soup: BeautifulSoup, location: Location) -> Iterator[Job]:
+    def _parse_json_ld(self, soup: BeautifulSoup, location: Location, work_type: WorkType) -> Iterator[Job]:
         for script in soup.find_all("script", type="application/ld+json"):
             try:
                 data = json.loads(script.string or "")

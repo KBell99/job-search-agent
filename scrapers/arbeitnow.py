@@ -16,7 +16,7 @@ _API = "https://www.arbeitnow.com/api/job-board-api"
 class ArbeitnowScraper(BaseScraper):
     name = "arbeitnow"
 
-    def scrape(self, location: Location) -> Iterator[Job]:
+    def scrape(self, location: Location, work_type: WorkType) -> Iterator[Job]:
         try:
             resp = self._get(_API)
             data = resp.json().get("data", [])
@@ -24,8 +24,8 @@ class ArbeitnowScraper(BaseScraper):
             logger.warning("[arbeitnow] API error: %s", e)
             return
 
-        title_lower = self.config.role.title.lower()
-        keywords = [k.lower() for k in self.config.role.keywords]
+        title_lower = self.role.title.lower()
+        keywords = [k.lower() for k in self.role.keywords]
 
         for item in data:
             job_title = item.get("title", "").lower()

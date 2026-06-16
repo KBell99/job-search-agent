@@ -1,30 +1,41 @@
 # Job Search Agent — Configuration Template
 # Copy this file to config.yaml and fill in your values.
 
-# ── Role ──────────────────────────────────────────────────────────────────────
-role:
-  title: "Software Engineer"          # primary search term sent to each job board
-  level:                              # junior | mid | senior | staff | principal
-    - "mid"
-    - "senior"
-  years_experience: 3                 # target years of experience; score peaks here
-  experience_std_dev: 2               # one std dev in years; each sigma drops weight by ~40%
-  keywords:                           # additional terms used to filter/score results
-    - "Python"
-    - "backend"
-
-# ── Resume ────────────────────────────────────────────────────────────────────
-resume:
-  path: "resume/YourResume.pdf"       # .pdf or .txt, relative to project root
+# ── Roles ─────────────────────────────────────────────────────────────────────
+# Each role is searched independently and scored against its own resume.
+# Add as many role entries as you like; results are merged and deduplicated.
+roles:
+  - title: "Software Engineer"        # primary search term sent to each job board
+    level:                            # junior | mid | senior | staff | principal
+      - "mid"
+      - "senior"
+    years_experience: 3               # target years of experience; score peaks here
+    experience_std_dev: 2             # one std dev in years; each sigma drops weight by ~40%
+    keywords:                         # additional terms used to filter/score results
+      - "Python"
+      - "backend"
+    resume: "resume/YourResume.pdf"   # .pdf or .txt, relative to project root
+  # - title: "Data Engineer"
+  #   level:
+  #     - "mid"
+  #   years_experience: 2
+  #   experience_std_dev: 2
+  #   keywords:
+  #     - "Python"
+  #     - "Spark"
+  #   resume: "resume/DataEngineerResume.pdf"
 
 # ── Job Boards ────────────────────────────────────────────────────────────────
-# linkedin   — public guest API, 1-hour time filter built in
-# indeed     — RSS feed, filtered locally to posted_within_hours
-# wellfound  — falls back to headless browser on 403
-# builtin    — falls back to headless browser on empty response
-# remotive   — remote-only, free API (no auth required)
+# linkedin      — public guest API, 1-hour time filter built in
+# indeed        — RSS feed, filtered locally to posted_within_hours
+# wellfound     — falls back to headless browser on 403
+# builtin       — falls back to headless browser on empty response
+# remotive      — remote-only, free API (no auth required)
 # weworkremotely — remote-only, RSS feed
-# arbeitnow  — EU + global, free API
+# arbeitnow     — EU + global, free API
+# roberthalf    — staffing agency; scrapes public job listings (no auth)
+# greenhouse    — scrapes company-specific boards via public Greenhouse API (no auth)
+#                 requires board_tokens — add one per company (the slug in their Greenhouse URL)
 job_boards:
   - name: "linkedin"
     enabled: true
@@ -40,6 +51,14 @@ job_boards:
     enabled: false
   - name: "arbeitnow"
     enabled: false
+  - name: "roberthalf"
+    enabled: false
+  - name: "greenhouse"
+    enabled: false
+    board_tokens:          # company board slugs from boards.greenhouse.io/<slug>
+      - "stripe"
+      - "airbnb"
+      # add as many as you like
 
 # ── Locations ─────────────────────────────────────────────────────────────────
 # List one or more cities. Each is searched independently and results are merged.
@@ -50,7 +69,9 @@ location:
   radius_miles: 25
 
 # ── Work Type ─────────────────────────────────────────────────────────────────
-work_type: "hybrid"                   # remote | hybrid | onsite
+work_type:                            # remote | hybrid | onsite — one or more values
+  - "hybrid"
+# - "remote"
 
 # ── Application Settings ──────────────────────────────────────────────────────
 application:
@@ -59,6 +80,12 @@ application:
   posted_within_hours: 24            # only consider jobs posted within this window
   min_match_score: 65                 # 0–100; jobs below this threshold are skipped
   cover_letter: true                  # generate a tailored cover letter per job
+  # Employment type filter — jobs with a known type not in this list are dropped.
+  # Jobs with no type listed are always included (type is often absent from postings).
+  # full-time | part-time | contract | temporary
+  employment_type:
+    - "full-time"
+  # - "contract"
   salary:
     min:                              # minimum acceptable yearly salary (e.g. 100000)
     max:                              # upper bound — leave blank for no limit

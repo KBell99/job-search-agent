@@ -9,7 +9,7 @@ from typing import Iterator
 from bs4 import BeautifulSoup
 
 from config import Config
-from models import Job, Location, WorkType
+from models import EmploymentType, Job, Location, WorkType
 from scrapers.base import BaseScraper
 
 logger = logging.getLogger(__name__)
@@ -20,20 +20,33 @@ _WORK_TYPE_CODES = {
     WorkType.ONSITE: "1",
 }
 
+_EMPLOYMENT_TYPE_CODES = {
+    EmploymentType.FULL_TIME: "F",
+    EmploymentType.PART_TIME: "P",
+    EmploymentType.CONTRACT: "C",
+    EmploymentType.TEMPORARY: "T",
+}
+
 
 class LinkedInScraper(BaseScraper):
     name = "linkedin"
 
-    def scrape(self, location: Location) -> Iterator[Job]:
-        title = urllib.parse.quote_plus(self.config.role.title)
+    def scrape(self, location: Location, work_type: WorkType) -> Iterator[Job]:
+        title = urllib.parse.quote_plus(self.role.title)
         loc = urllib.parse.quote_plus(str(location))
-        wt_code = _WORK_TYPE_CODES.get(self.config.work_type, "")
+        wt_code = _WORK_TYPE_CODES.get(work_type, "")
         f_wt = f"&f_WT={wt_code}" if wt_code else ""
         seconds = max(3600, int(self.config.application.posted_within_hours * 3600))
 
+        et_codes = ",".join(
+            c for et in self.config.application.employment_types
+            if (c := _EMPLOYMENT_TYPE_CODES.get(et))
+        )
+        f_jt = f"&f_JT={et_codes}" if et_codes else ""
+
         url = (
             f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
-            f"?keywords={title}&location={loc}&f_TPR=r{seconds}{f_wt}&start=0"
+            f"?keywords={title}&location={loc}&f_TPR=r{seconds}{f_wt}{f_jt}&start=0"
         )
 
         logger.debug("[linkedin] fetching: %s", url)
@@ -45,11 +58,11 @@ class LinkedInScraper(BaseScraper):
 
         soup = BeautifulSoup(resp.text, "html.parser")
         for card in soup.find_all("li"):
-            job = self._parse_card(card, location)
+            job = self._parse_card(card, location, work_type)
             if job:
                 yield job
 
-    def _parse_card(self, card, location: Location) -> Job | None:
+    def _parse_card(self, card, location: Location, work_type: WorkType) -> Job | None:
         try:
             title_el = card.find("h3", class_=re.compile("title"))
             company_el = (
@@ -77,7 +90,7 @@ class LinkedInScraper(BaseScraper):
                 source=self.name,
                 description=card.get_text(" ", strip=True),
                 posted_at=posted_at,
-                work_type=self.config.work_type,
+                work_type=work_type,
                 job_id=job_id,
             )
         except Exception as e:
