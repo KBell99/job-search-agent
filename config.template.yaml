@@ -27,7 +27,6 @@ roles:
 
 # ── Job Boards ────────────────────────────────────────────────────────────────
 # linkedin      — public guest API, 1-hour time filter built in
-# indeed        — RSS feed, filtered locally to posted_within_hours
 # wellfound     — falls back to headless browser on 403
 # builtin       — falls back to headless browser on empty response
 # remotive      — remote-only, free API (no auth required)
@@ -38,8 +37,6 @@ roles:
 #                 requires board_tokens — add one per company (the slug in their Greenhouse URL)
 job_boards:
   - name: "linkedin"
-    enabled: true
-  - name: "indeed"
     enabled: true
   - name: "wellfound"
     enabled: true

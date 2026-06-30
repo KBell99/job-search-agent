@@ -9,7 +9,6 @@ from models import Job
 from scrapers.base import BaseScraper
 from scrapers.arbeitnow import ArbeitnowScraper
 from scrapers.builtin import BuiltinScraper
-from scrapers.indeed import IndeedScraper
 from scrapers.linkedin import LinkedInScraper
 from scrapers.remotive import RemotiveScraper
 from scrapers.wellfound import WellfoundScraper
@@ -21,7 +20,6 @@ from scrapers.greenhouse import GreenhouseScraper
 logger = logging.getLogger(__name__)
 
 _REGISTRY: dict[str, type[BaseScraper]] = {
-    "indeed": IndeedScraper,
     "linkedin": LinkedInScraper,
     "wellfound": WellfoundScraper,
     "builtin": BuiltinScraper,

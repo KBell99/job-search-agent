@@ -14,6 +14,16 @@ from applicator.tracker import ApplicationTracker
 
 logger = logging.getLogger(__name__)
 
+_SENIORITY_ORDER = ["junior", "mid", "senior", "staff", "principal"]
+
+_SENIORITY_PATTERNS = [
+    (r"\b(junior|jr\.?|entry.?level|associate)\b", "junior"),
+    (r"\b(mid|intermediate|mid.?level)\b", "mid"),
+    (r"\b(senior|sr\.?)\b", "senior"),
+    (r"\bstaff\b", "staff"),
+    (r"\b(principal|distinguished|fellow|director|vp)\b", "principal"),
+]
+
 
 def load_resume(path: Path) -> str:
     suffix = path.suffix.lower()
@@ -173,14 +183,28 @@ class ApplicationEngine:
     def _adjust_score(self, score: int, job: Job) -> int:
         adjustment = 0
 
-        # Seniority: senior is the sweet spot; staff/principal overshoot; junior undershoots
+        # Seniority: reward titles within configured level range, penalise outside it
         title = job.title.lower()
-        if re.search(r"\b(staff|principal|distinguished|fellow|director|vp)\b", title):
-            adjustment -= 10
-        elif re.search(r"\b(senior|sr\.?)\b", title):
-            adjustment += 8
-        elif re.search(r"\b(junior|jr\.?|entry.?level|associate)\b", title):
-            adjustment -= 12
+        job_level: str | None = None
+        for pattern, level in _SENIORITY_PATTERNS:
+            if re.search(pattern, title):
+                job_level = level
+                break
+
+        if job_level is not None:
+            job_idx = _SENIORITY_ORDER.index(job_level)
+            target_indices = [
+                _SENIORITY_ORDER.index(lvl)
+                for lvl in self.role.level
+                if lvl in _SENIORITY_ORDER
+            ]
+            if target_indices:
+                lo, hi = min(target_indices), max(target_indices)
+                if lo <= job_idx <= hi:
+                    adjustment += 8
+                else:
+                    distance = min(abs(job_idx - lo), abs(job_idx - hi))
+                    adjustment -= min(distance * 10, 20)
 
         # Experience proximity: Gaussian weight centred on configured target years.
         # Scans all mentions and takes the maximum so a "7+ years total experience"
